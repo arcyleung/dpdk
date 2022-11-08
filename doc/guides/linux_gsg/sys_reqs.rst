@@ -41,9 +41,9 @@ Compilation of the DPDK
    resulting in statically linked applications not being linked properly.
    Use an updated version of ``pkg-config`` or ``pkgconf`` instead when building applications
 
-*   Python 3.5 or later.
+*   Python 3.6 or later.
 
-*   Meson (version 0.49.2+) and ninja
+*   Meson (version 0.53.2+) and ninja
 
     * ``meson`` & ``ninja-build`` packages in most Linux distributions
     * If the packaged version is below the minimum version, the latest versions
@@ -105,7 +105,7 @@ System Software
 
 **Required:**
 
-*   Kernel version >= 4.4
+*   Kernel version >= 4.14
 
     The kernel version required is based on the oldest long term stable kernel available
     at kernel.org when the DPDK version is in development.

@@ -1242,7 +1242,9 @@ struct nix_cn10k_rq_ctx_s {
 	uint64_t ipsech_ena : 1;
 	uint64_t ena_wqwd : 1;
 	uint64_t cq : 20;
-	uint64_t rsvd_36_24 : 13;
+	uint64_t rsvd_34_24 : 11;
+	uint64_t port_ol4_dis : 1;
+	uint64_t port_il4_dis : 1;
 	uint64_t lenerr_dis : 1;
 	uint64_t csum_il4_dis : 1;
 	uint64_t csum_ol4_dis : 1;
@@ -2116,6 +2118,7 @@ struct nix_lso_format {
 #define NIX_CN9K_MAX_HW_FRS 9212UL
 #define NIX_LBK_MAX_HW_FRS  65535UL
 #define NIX_SDP_MAX_HW_FRS  65535UL
+#define NIX_SDP_16K_HW_FRS  16380UL
 #define NIX_RPM_MAX_HW_FRS  16380UL
 #define NIX_MIN_HW_FRS	    60UL
 

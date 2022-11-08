@@ -151,6 +151,7 @@ struct mbox_msghdr {
 	M(CPT_RXC_TIME_CFG, 0xA06, cpt_rxc_time_cfg, cpt_rxc_time_cfg_req,     \
 	  msg_rsp)                                                             \
 	M(CPT_CTX_CACHE_SYNC, 0xA07, cpt_ctx_cache_sync, msg_req, msg_rsp)     \
+	M(CPT_LF_RESET, 0xA08, cpt_lf_reset, cpt_lf_rst_req, msg_rsp)          \
 	M(CPT_RX_INLINE_LF_CFG, 0xBFE, cpt_rx_inline_lf_cfg,                   \
 	  cpt_rx_inline_lf_cfg_msg, msg_rsp)                                   \
 	M(CPT_GET_CAPS, 0xBFD, cpt_caps_get, msg_req, cpt_caps_rsp_msg)        \
@@ -263,7 +264,11 @@ struct mbox_msghdr {
 	  nix_bp_cfg_rsp)                                                      \
 	M(NIX_CPT_BP_DISABLE, 0x8021, nix_cpt_bp_disable, nix_bp_cfg_req,      \
 	  msg_rsp)                                                             \
-	M(NIX_RX_SW_SYNC, 0x8022, nix_rx_sw_sync, msg_req, msg_rsp)
+	M(NIX_RX_SW_SYNC, 0x8022, nix_rx_sw_sync, msg_req, msg_rsp)            \
+	M(NIX_READ_INLINE_IPSEC_CFG, 0x8023, nix_read_inline_ipsec_cfg,        \
+	  msg_req, nix_inline_ipsec_cfg)				       \
+	M(NIX_LF_INLINE_RQ_CFG, 0x8024, nix_lf_inline_rq_cfg,                  \
+	  nix_rq_cpt_field_mask_cfg_req, msg_rsp)
 
 /* Messages initiated by AF (range 0xC00 - 0xDFF) */
 #define MBOX_UP_CGX_MESSAGES                                                   \
@@ -1086,6 +1091,25 @@ struct nix_mark_format_cfg_rsp {
 	uint8_t __io mark_format_idx;
 };
 
+struct nix_rq_cpt_field_mask_cfg_req {
+	struct mbox_msghdr hdr;
+#define RQ_CTX_MASK_MAX 6
+	union {
+		uint64_t __io rq_ctx_word_set[RQ_CTX_MASK_MAX];
+		struct nix_cn10k_rq_ctx_s rq_set;
+	};
+	union {
+		uint64_t __io rq_ctx_word_mask[RQ_CTX_MASK_MAX];
+		struct nix_cn10k_rq_ctx_s rq_mask;
+	};
+	struct nix_lf_rx_ipec_cfg1_req {
+		uint32_t __io spb_cpt_aura;
+		uint8_t __io rq_mask_enable;
+		uint8_t __io spb_cpt_sizem1;
+		uint8_t __io spb_cpt_enable;
+	} ipsec_cfg1;
+};
+
 struct nix_lso_format_cfg {
 	struct mbox_msghdr hdr;
 	uint64_t __io field_mask;
@@ -1141,10 +1165,10 @@ struct nix_bp_cfg_req {
 	/* bpid_per_chan = 1 assigns separate bp id for each channel */
 };
 
-/* PF can be mapped to either CGX or LBK interface,
- * so maximum 64 channels are possible.
+/* PF can be mapped to either CGX or LBK or SDP interface,
+ * so maximum 256 channels are possible.
  */
-#define NIX_MAX_CHAN	 64
+#define NIX_MAX_CHAN	 256
 #define NIX_CGX_MAX_CHAN 16
 #define NIX_LBK_MAX_CHAN 1
 struct nix_bp_cfg_rsp {
@@ -1161,7 +1185,9 @@ struct nix_inline_ipsec_cfg {
 	uint32_t __io cpt_credit;
 	struct {
 		uint8_t __io egrp;
-		uint8_t __io opcode;
+		uint16_t __io opcode;
+		uint16_t __io param1;
+		uint16_t __io param2;
 	} gen_cfg;
 	struct {
 		uint16_t __io cpt_pf_func;
@@ -1190,7 +1216,13 @@ struct nix_inline_ipsec_lf_cfg {
 struct nix_hw_info {
 	struct mbox_msghdr hdr;
 	uint16_t __io vwqe_delay;
-	uint16_t __io rsvd[15];
+	uint16_t __io max_mtu;
+	uint16_t __io min_mtu;
+	uint32_t __io rpm_dwrr_mtu;
+	uint32_t __io sdp_dwrr_mtu;
+	uint32_t __io lbk_dwrr_mtu;
+	uint32_t __io rsvd32[1];
+	uint64_t __io rsvd[15]; /* Add reserved fields for future expansion */
 };
 
 struct nix_bandprof_alloc_req {
@@ -1330,7 +1362,7 @@ struct sso_grp_priority {
 struct sso_grp_qos_cfg {
 	struct mbox_msghdr hdr;
 	uint16_t __io grp;
-	uint32_t __io xaq_limit;
+	uint32_t __io rsvd;
 	uint16_t __io taq_thr;
 	uint16_t __io iaq_thr;
 };
@@ -1465,7 +1497,9 @@ struct cpt_rx_inline_lf_cfg_msg {
 	uint16_t __io sso_pf_func;
 	uint16_t __io param1;
 	uint16_t __io param2;
-	uint16_t __io reserved;
+	uint16_t __io opcode;
+	uint32_t __io credit;
+	uint32_t __io reserved;
 };
 
 enum cpt_eng_type {
@@ -1489,7 +1523,10 @@ union cpt_eng_caps {
 		uint64_t __io kasumi : 1;
 		uint64_t __io des : 1;
 		uint64_t __io crc : 1;
-		uint64_t __io reserved_14_63 : 50;
+		uint64_t __io mmul : 1;
+		uint64_t __io reserved_15_33 : 19;
+		uint64_t __io pdcp_chain : 1;
+		uint64_t __io reserved_35_63 : 29;
 	};
 };
 
@@ -1509,6 +1546,11 @@ struct cpt_eng_grp_rsp {
 	struct mbox_msghdr hdr;
 	uint8_t __io eng_type;
 	uint8_t __io eng_grp_num;
+};
+
+struct cpt_lf_rst_req {
+	struct mbox_msghdr hdr;
+	uint32_t __io slot;
 };
 
 /* REE mailbox error codes

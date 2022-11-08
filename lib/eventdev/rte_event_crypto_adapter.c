@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <rte_common.h>
-#include <rte_dev.h>
+#include <dev_driver.h>
 #include <rte_errno.h>
 #include <rte_cryptodev.h>
 #include <cryptodev_pmd.h>
@@ -32,6 +32,8 @@
  * iterations of eca_crypto_adapter_enq_run()
  */
 #define CRYPTO_ENQ_FLUSH_THRESHOLD 1024
+
+#define ECA_ADAPTER_ARRAY "crypto_adapter_array"
 
 struct crypto_ops_circular_buffer {
 	/* index of head element in circular buffer */
@@ -138,7 +140,6 @@ eca_valid_id(uint8_t id)
 static int
 eca_init(void)
 {
-	const char *name = "crypto_adapter_array";
 	const struct rte_memzone *mz;
 	unsigned int sz;
 
@@ -146,9 +147,10 @@ eca_init(void)
 	    RTE_EVENT_CRYPTO_ADAPTER_MAX_INSTANCE;
 	sz = RTE_ALIGN(sz, RTE_CACHE_LINE_SIZE);
 
-	mz = rte_memzone_lookup(name);
+	mz = rte_memzone_lookup(ECA_ADAPTER_ARRAY);
 	if (mz == NULL) {
-		mz = rte_memzone_reserve_aligned(name, sz, rte_socket_id(), 0,
+		mz = rte_memzone_reserve_aligned(ECA_ADAPTER_ARRAY, sz,
+						 rte_socket_id(), 0,
 						 RTE_CACHE_LINE_SIZE);
 		if (mz == NULL) {
 			RTE_EDEV_LOG_ERR("failed to reserve memzone err = %"
@@ -158,6 +160,22 @@ eca_init(void)
 	}
 
 	event_crypto_adapter = mz->addr;
+	return 0;
+}
+
+static int
+eca_memzone_lookup(void)
+{
+	const struct rte_memzone *mz;
+
+	if (event_crypto_adapter == NULL) {
+		mz = rte_memzone_lookup(ECA_ADAPTER_ARRAY);
+		if (mz == NULL)
+			return -ENOMEM;
+
+		event_crypto_adapter = mz->addr;
+	}
+
 	return 0;
 }
 
@@ -771,7 +789,7 @@ check:
 	return nb_deq;
 }
 
-static void
+static int
 eca_crypto_adapter_run(struct event_crypto_adapter *adapter,
 		       unsigned int max_ops)
 {
@@ -791,22 +809,26 @@ eca_crypto_adapter_run(struct event_crypto_adapter *adapter,
 
 	}
 
-	if (ops_left == max_ops)
+	if (ops_left == max_ops) {
 		rte_event_maintain(adapter->eventdev_id,
 				   adapter->event_port_id, 0);
+		return -EAGAIN;
+	} else
+		return 0;
 }
 
 static int
 eca_service_func(void *args)
 {
 	struct event_crypto_adapter *adapter = args;
+	int ret;
 
 	if (rte_spinlock_trylock(&adapter->lock) == 0)
 		return 0;
-	eca_crypto_adapter_run(adapter, adapter->max_nb);
+	ret = eca_crypto_adapter_run(adapter, adapter->max_nb);
 	rte_spinlock_unlock(&adapter->lock);
 
-	return 0;
+	return ret;
 }
 
 static int
@@ -921,11 +943,12 @@ int
 rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 			uint8_t cdev_id,
 			int32_t queue_pair_id,
-			const struct rte_event *event)
+			const struct rte_event_crypto_adapter_queue_conf *conf)
 {
+	struct rte_event_crypto_adapter_vector_limits limits;
 	struct event_crypto_adapter *adapter;
-	struct rte_eventdev *dev;
 	struct crypto_device_info *dev_info;
+	struct rte_eventdev *dev;
 	uint32_t cap;
 	int ret;
 
@@ -950,11 +973,49 @@ rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 		return ret;
 	}
 
-	if ((cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_QP_EV_BIND) &&
-	    (event == NULL)) {
-		RTE_EDEV_LOG_ERR("Conf value can not be NULL for dev_id=%u",
-				  cdev_id);
-		return -EINVAL;
+	if (conf == NULL) {
+		if (cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_QP_EV_BIND) {
+			RTE_EDEV_LOG_ERR("Conf value can not be NULL for dev_id=%u",
+					 cdev_id);
+			return -EINVAL;
+		}
+	} else {
+		if (conf->flags & RTE_EVENT_CRYPTO_ADAPTER_EVENT_VECTOR) {
+			if ((cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_EVENT_VECTOR) == 0) {
+				RTE_EDEV_LOG_ERR("Event vectorization is not supported,"
+						 "dev %" PRIu8 " cdev %" PRIu8, id,
+						 cdev_id);
+				return -ENOTSUP;
+			}
+
+			ret = rte_event_crypto_adapter_vector_limits_get(
+				adapter->eventdev_id, cdev_id, &limits);
+			if (ret < 0) {
+				RTE_EDEV_LOG_ERR("Failed to get event device vector "
+						 "limits, dev %" PRIu8 " cdev %" PRIu8,
+						 id, cdev_id);
+				return -EINVAL;
+			}
+
+			if (conf->vector_sz < limits.min_sz ||
+			    conf->vector_sz > limits.max_sz ||
+			    conf->vector_timeout_ns < limits.min_timeout_ns ||
+			    conf->vector_timeout_ns > limits.max_timeout_ns ||
+			    conf->vector_mp == NULL) {
+				RTE_EDEV_LOG_ERR("Invalid event vector configuration,"
+						" dev %" PRIu8 " cdev %" PRIu8,
+						id, cdev_id);
+				return -EINVAL;
+			}
+
+			if (conf->vector_mp->elt_size < (sizeof(struct rte_event_vector) +
+			    (sizeof(uintptr_t) * conf->vector_sz))) {
+				RTE_EDEV_LOG_ERR("Invalid event vector configuration,"
+						" dev %" PRIu8 " cdev %" PRIu8,
+						id, cdev_id);
+				return -EINVAL;
+			}
+		}
 	}
 
 	dev_info = &adapter->cdevs[cdev_id];
@@ -974,9 +1035,8 @@ rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 	     adapter->mode == RTE_EVENT_CRYPTO_ADAPTER_OP_NEW) ||
 	    (cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW &&
 	     adapter->mode == RTE_EVENT_CRYPTO_ADAPTER_OP_NEW)) {
-		RTE_FUNC_PTR_OR_ERR_RET(
-			*dev->dev_ops->crypto_adapter_queue_pair_add,
-			-ENOTSUP);
+		if (*dev->dev_ops->crypto_adapter_queue_pair_add == NULL)
+			return -ENOTSUP;
 		if (dev_info->qpairs == NULL) {
 			dev_info->qpairs =
 			    rte_zmalloc_socket(adapter->mem_name,
@@ -990,7 +1050,7 @@ rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 		ret = (*dev->dev_ops->crypto_adapter_queue_pair_add)(dev,
 				dev_info->dev,
 				queue_pair_id,
-				event);
+				conf);
 		if (ret)
 			return ret;
 
@@ -1030,8 +1090,8 @@ rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 		rte_service_component_runstate_set(adapter->service_id, 1);
 	}
 
-	rte_eventdev_trace_crypto_adapter_queue_pair_add(id, cdev_id, event,
-		queue_pair_id);
+	rte_eventdev_trace_crypto_adapter_queue_pair_add(id, cdev_id,
+		queue_pair_id, conf);
 	return 0;
 }
 
@@ -1076,9 +1136,8 @@ rte_event_crypto_adapter_queue_pair_del(uint8_t id, uint8_t cdev_id,
 	if ((cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD) ||
 	    (cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_NEW &&
 	     adapter->mode == RTE_EVENT_CRYPTO_ADAPTER_OP_NEW)) {
-		RTE_FUNC_PTR_OR_ERR_RET(
-			*dev->dev_ops->crypto_adapter_queue_pair_del,
-			-ENOTSUP);
+		if (*dev->dev_ops->crypto_adapter_queue_pair_del == NULL)
+			return -ENOTSUP;
 		ret = (*dev->dev_ops->crypto_adapter_queue_pair_del)(dev,
 						dev_info->dev,
 						queue_pair_id);
@@ -1197,6 +1256,9 @@ rte_event_crypto_adapter_stats_get(uint8_t id,
 	uint32_t i;
 	int ret;
 
+	if (eca_memzone_lookup())
+		return -ENOMEM;
+
 	EVENT_CRYPTO_ADAPTER_ID_VALID_OR_ERR_RET(id, -EINVAL);
 
 	adapter = eca_id_to_adapter(id);
@@ -1237,6 +1299,9 @@ rte_event_crypto_adapter_stats_reset(uint8_t id)
 	struct crypto_device_info *dev_info;
 	struct rte_eventdev *dev;
 	uint32_t i;
+
+	if (eca_memzone_lookup())
+		return -ENOMEM;
 
 	EVENT_CRYPTO_ADAPTER_ID_VALID_OR_ERR_RET(id, -EINVAL);
 
@@ -1289,4 +1354,49 @@ rte_event_crypto_adapter_event_port_get(uint8_t id, uint8_t *event_port_id)
 	*event_port_id = adapter->event_port_id;
 
 	return 0;
+}
+
+int
+rte_event_crypto_adapter_vector_limits_get(
+	uint8_t dev_id, uint16_t cdev_id,
+	struct rte_event_crypto_adapter_vector_limits *limits)
+{
+	struct rte_cryptodev *cdev;
+	struct rte_eventdev *dev;
+	uint32_t cap;
+	int ret;
+
+	RTE_EVENTDEV_VALID_DEVID_OR_ERR_RET(dev_id, -EINVAL);
+
+	if (!rte_cryptodev_is_valid_dev(cdev_id)) {
+		RTE_EDEV_LOG_ERR("Invalid dev_id=%" PRIu8, cdev_id);
+		return -EINVAL;
+	}
+
+	if (limits == NULL) {
+		RTE_EDEV_LOG_ERR("Invalid limits storage provided");
+		return -EINVAL;
+	}
+
+	dev = &rte_eventdevs[dev_id];
+	cdev = rte_cryptodev_pmd_get_dev(cdev_id);
+
+	ret = rte_event_crypto_adapter_caps_get(dev_id, cdev_id, &cap);
+	if (ret) {
+		RTE_EDEV_LOG_ERR("Failed to get adapter caps edev %" PRIu8
+				 "cdev %" PRIu16, dev_id, cdev_id);
+		return ret;
+	}
+
+	if (!(cap & RTE_EVENT_CRYPTO_ADAPTER_CAP_EVENT_VECTOR)) {
+		RTE_EDEV_LOG_ERR("Event vectorization is not supported,"
+				 "dev %" PRIu8 " cdev %" PRIu8, dev_id, cdev_id);
+		return -ENOTSUP;
+	}
+
+	if ((*dev->dev_ops->crypto_adapter_vector_limits_get) == NULL)
+		return -ENOTSUP;
+
+	return dev->dev_ops->crypto_adapter_vector_limits_get(
+		dev, cdev, limits);
 }

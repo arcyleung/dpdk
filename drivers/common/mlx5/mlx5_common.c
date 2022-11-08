@@ -164,8 +164,9 @@ mlx5_kvargs_prepare(struct mlx5_kvargs_ctrl *mkvlist,
 	struct rte_kvargs *kvlist;
 	uint32_t i;
 
-	if (devargs == NULL)
+	if (mkvlist == NULL)
 		return 0;
+	MLX5_ASSERT(devargs != NULL && devargs->args != NULL);
 	kvlist = rte_kvargs_parse(devargs->args, NULL);
 	if (kvlist == NULL) {
 		rte_errno = EINVAL;
@@ -400,8 +401,9 @@ parse_class_options(const struct rte_devargs *devargs,
 {
 	int ret = 0;
 
-	if (devargs == NULL)
+	if (mkvlist == NULL)
 		return 0;
+	MLX5_ASSERT(devargs != NULL);
 	if (devargs->cls != NULL && devargs->cls->name != NULL)
 		/* Global syntax, only one class type. */
 		return class_name_to_value(devargs->cls->name);
@@ -583,18 +585,17 @@ mlx5_dev_mempool_subscribe(struct mlx5_common_device *cdev)
 	if (!cdev->config.mr_mempool_reg_en)
 		return 0;
 	rte_rwlock_write_lock(&cdev->mr_scache.mprwlock);
-	if (cdev->mr_scache.mp_cb_registered)
-		goto exit;
 	/* Callback for this device may be already registered. */
 	ret = rte_mempool_event_callback_register(mlx5_dev_mempool_event_cb,
 						  cdev);
 	if (ret != 0 && rte_errno != EEXIST)
 		goto exit;
+	__atomic_add_fetch(&cdev->mr_scache.mempool_cb_reg_n, 1,
+			   __ATOMIC_ACQUIRE);
 	/* Register mempools only once for this device. */
-	if (ret == 0)
+	if (rte_eal_process_type() == RTE_PROC_PRIMARY)
 		rte_mempool_walk(mlx5_dev_mempool_register_cb, cdev);
 	ret = 0;
-	cdev->mr_scache.mp_cb_registered = 1;
 exit:
 	rte_rwlock_write_unlock(&cdev->mr_scache.mprwlock);
 	return ret;
@@ -603,10 +604,14 @@ exit:
 static void
 mlx5_dev_mempool_unsubscribe(struct mlx5_common_device *cdev)
 {
+	uint32_t mempool_cb_reg_n;
 	int ret;
 
-	if (!cdev->mr_scache.mp_cb_registered ||
-	    !cdev->config.mr_mempool_reg_en)
+	if (!cdev->config.mr_mempool_reg_en)
+		return;
+	mempool_cb_reg_n = __atomic_sub_fetch(&cdev->mr_scache.mempool_cb_reg_n,
+					      1, __ATOMIC_RELEASE);
+	if (mempool_cb_reg_n > 0)
 		return;
 	/* Stop watching for mempool events and unregister all mempools. */
 	ret = rte_mempool_event_callback_unregister(mlx5_dev_mempool_event_cb,
@@ -962,7 +967,7 @@ mlx5_common_dev_probe(struct rte_device *eal_dev)
 	int ret;
 
 	DRV_LOG(INFO, "probe device \"%s\".", eal_dev->name);
-	if (eal_dev->devargs != NULL)
+	if (eal_dev->devargs != NULL && eal_dev->devargs->args != NULL)
 		mkvlist_p = &mkvlist;
 	ret = mlx5_kvargs_prepare(mkvlist_p, eal_dev->devargs);
 	if (ret < 0) {

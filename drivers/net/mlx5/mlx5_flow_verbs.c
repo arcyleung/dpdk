@@ -122,7 +122,7 @@ flow_verbs_counter_get_by_idx(struct rte_eth_dev *dev,
 			      struct mlx5_flow_counter_pool **ppool)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
-	struct mlx5_flow_counter_mng *cmng = &priv->sh->cmng;
+	struct mlx5_flow_counter_mng *cmng = &priv->sh->sws_cmng;
 	struct mlx5_flow_counter_pool *pool;
 
 	idx = (idx - 1) & (MLX5_CNT_SHARED_OFFSET - 1);
@@ -215,7 +215,7 @@ static uint32_t
 flow_verbs_counter_new(struct rte_eth_dev *dev, uint32_t id __rte_unused)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
-	struct mlx5_flow_counter_mng *cmng = &priv->sh->cmng;
+	struct mlx5_flow_counter_mng *cmng = &priv->sh->sws_cmng;
 	struct mlx5_flow_counter_pool *pool = NULL;
 	struct mlx5_flow_counter *cnt = NULL;
 	uint32_t n_valid = cmng->n_valid;
@@ -1245,12 +1245,14 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 	uint16_t ether_type = 0;
 	bool is_empty_vlan = false;
 	uint16_t udp_dport = 0;
+	bool is_root;
 
 	if (items == NULL)
 		return -1;
 	ret = mlx5_flow_validate_attributes(dev, attr, error);
 	if (ret < 0)
 		return ret;
+	is_root = ret;
 	for (; items->type != RTE_FLOW_ITEM_TYPE_END; items++) {
 		int tunnel = !!(item_flags & MLX5_FLOW_LAYER_TUNNEL);
 		int ret = 0;
@@ -1380,7 +1382,7 @@ flow_verbs_validate(struct rte_eth_dev *dev,
 		case RTE_FLOW_ITEM_TYPE_VXLAN:
 			ret = mlx5_flow_validate_item_vxlan(dev, udp_dport,
 							    items, item_flags,
-							    attr, error);
+							    is_root, error);
 			if (ret < 0)
 				return ret;
 			last_item = MLX5_FLOW_LAYER_VXLAN;

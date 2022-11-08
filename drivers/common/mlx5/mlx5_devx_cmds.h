@@ -15,6 +15,16 @@
 #define MLX5_DEVX_MAX_KLM_ENTRIES ((UINT16_MAX - \
 		MLX5_ST_SZ_DW(create_mkey_in) * 4) / (MLX5_ST_SZ_DW(klm) * 4))
 
+struct mlx5_devx_counter_attr {
+	uint32_t pd_valid:1;
+	uint32_t pd:24;
+	uint32_t bulk_log_max_alloc:1;
+	union {
+		uint8_t flow_counter_bulk_log_size;
+		uint8_t bulk_n_128;
+	};
+};
+
 struct mlx5_devx_mkey_attr {
 	uint64_t addr;
 	uint64_t size;
@@ -191,6 +201,9 @@ struct mlx5_hca_attr {
 	uint32_t log_max_hairpin_queues:5;
 	uint32_t log_max_hairpin_wq_data_sz:5;
 	uint32_t log_max_hairpin_num_packets:5;
+	uint32_t hairpin_sq_wqe_bb_size:4;
+	uint32_t hairpin_sq_wq_in_host_mem:1;
+	uint32_t hairpin_data_buffer_locked:1;
 	uint32_t vhca_id:16;
 	uint32_t relaxed_ordering_write:1;
 	uint32_t relaxed_ordering_read:1;
@@ -260,7 +273,21 @@ struct mlx5_hca_attr {
 	uint32_t crypto_wrapped_import_method:1;
 	uint16_t esw_mgr_vport_id; /* E-Switch Mgr vport ID . */
 	uint16_t max_wqe_sz_sq;
+	uint32_t set_reg_c:8;
+	uint32_t nic_flow_table:1;
 	uint32_t modify_outer_ip_ecn:1;
+	union {
+		uint32_t max_flow_counter;
+		struct {
+			uint16_t max_flow_counter_15_0;
+			uint16_t max_flow_counter_31_16;
+		};
+	};
+	uint32_t flow_counter_bulk_log_max_alloc:5;
+	uint32_t flow_counter_bulk_log_granularity:5;
+	uint32_t alloc_flow_counter_pd:1;
+	uint32_t flow_counter_access_aso:1;
+	uint32_t flow_access_aso_opc_mod:8;
 };
 
 /* LAG Context. */
@@ -311,6 +338,7 @@ struct mlx5_devx_create_rq_attr {
 	uint32_t state:4;
 	uint32_t flush_in_error_en:1;
 	uint32_t hairpin:1;
+	uint32_t hairpin_data_buffer_type:3;
 	uint32_t ts_format:2;
 	uint32_t user_index:24;
 	uint32_t cqn:24;
@@ -407,6 +435,7 @@ struct mlx5_devx_create_sq_attr {
 	uint32_t non_wire:1;
 	uint32_t static_sq_wq:1;
 	uint32_t ts_format:2;
+	uint32_t hairpin_wq_buffer_type:3;
 	uint32_t user_index:24;
 	uint32_t cqn:24;
 	uint32_t packet_pacing_rate_limit_index:16;
@@ -590,6 +619,11 @@ struct mlx5_devx_crypto_login_attr {
 };
 
 /* mlx5_devx_cmds.c */
+
+__rte_internal
+struct mlx5_devx_obj *
+mlx5_devx_cmd_flow_counter_alloc_general(void *ctx,
+				struct mlx5_devx_counter_attr *attr);
 
 __rte_internal
 struct mlx5_devx_obj *mlx5_devx_cmd_flow_counter_alloc(void *ctx,

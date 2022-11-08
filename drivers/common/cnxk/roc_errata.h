@@ -30,8 +30,7 @@ roc_errata_npa_has_no_fc_stype_ststp(void)
 static inline bool
 roc_errata_nix_has_no_drop_aging(void)
 {
-	return (roc_model_is_cn10ka_a0() || roc_model_is_cnf10ka_a0() ||
-		roc_model_is_cnf10kb_a0());
+	return (roc_model_is_cn10ka_a0() || roc_model_is_cnf10ka_a0());
 }
 
 /* Errata IPBUNIXRX-40130 */
@@ -81,7 +80,22 @@ roc_errata_nix_has_perf_issue_on_stats_update(void)
 static inline bool
 roc_errata_cpt_hang_on_x2p_bp(void)
 {
+	return roc_model_is_cn10ka_a0() || roc_model_is_cn10ka_a1();
+}
+
+/* IPBUNIXRX-40400 */
+static inline bool
+roc_errata_nix_no_meta_aura(void)
+{
 	return roc_model_is_cn10ka_a0();
+}
+
+/* Errata IPBUNIXTX-35039 */
+static inline bool
+roc_errata_nix_sdp_send_has_mtu_size_16k(void)
+{
+	return (roc_model_is_cnf95xxn_a0() || roc_model_is_cnf95xxo_a0() ||
+		roc_model_is_cn96_a0() || roc_model_is_cn96_b0());
 }
 
 #endif /* _ROC_ERRATA_H_ */

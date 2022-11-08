@@ -6,7 +6,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
-#include <rte_dev.h>
+#include <dev_driver.h>
 #include <ethdev_driver.h>
 #include <ethdev_pci.h>
 #include <rte_malloc.h>
@@ -1063,6 +1063,8 @@ found:
 	dev_info->vmdq_pool_base = 0;
 	dev_info->vmdq_queue_base = 0;
 
+	dev_info->err_handle_mode = RTE_ETH_ERROR_HANDLE_MODE_PROACTIVE;
+
 	return 0;
 }
 
@@ -1654,6 +1656,7 @@ static void bnxt_drv_uninit(struct bnxt *bp)
 	bnxt_free_link_info(bp);
 	bnxt_free_parent_info(bp);
 	bnxt_uninit_locks(bp);
+	bnxt_free_rep_info(bp);
 
 	rte_memzone_free((const struct rte_memzone *)bp->tx_mem_zone);
 	bp->tx_mem_zone = NULL;
@@ -3030,7 +3033,7 @@ int bnxt_mtu_set_op(struct rte_eth_dev *eth_dev, uint16_t new_mtu)
 	/* Return if port is active */
 	if (eth_dev->data->dev_started) {
 		PMD_DRV_LOG(ERR, "Stop port before changing MTU\n");
-		return -EPERM;
+		return -EBUSY;
 	}
 
 	/* Exit if receive queues are not configured yet */
@@ -4381,13 +4384,18 @@ static void bnxt_dev_recover(void *arg)
 	PMD_DRV_LOG(INFO, "Port: %u Recovered from FW reset\n",
 		    bp->eth_dev->data->port_id);
 	pthread_mutex_unlock(&bp->err_recovery_lock);
-
+	rte_eth_dev_callback_process(bp->eth_dev,
+				     RTE_ETH_EVENT_RECOVERY_SUCCESS,
+				     NULL);
 	return;
 err_start:
 	bnxt_dev_stop(bp->eth_dev);
 err:
 	bp->flags |= BNXT_FLAG_FATAL_ERROR;
 	bnxt_uninit_resources(bp, false);
+	rte_eth_dev_callback_process(bp->eth_dev,
+				     RTE_ETH_EVENT_RECOVERY_FAILED,
+				     NULL);
 	if (bp->eth_dev->data->dev_conf.intr_conf.rmv)
 		rte_eth_dev_callback_process(bp->eth_dev,
 					     RTE_ETH_EVENT_INTR_RMV,
@@ -4558,6 +4566,10 @@ reset:
 	bnxt_stop_rxtx(bp->eth_dev);
 
 	PMD_DRV_LOG(ERR, "Detected FW dead condition\n");
+
+	rte_eth_dev_callback_process(bp->eth_dev,
+				     RTE_ETH_EVENT_ERR_RECOVERING,
+				     NULL);
 
 	if (bnxt_is_primary_func(bp))
 		wait_msec = info->primary_func_wait_period;
@@ -5977,9 +5989,7 @@ bnxt_uninit_resources(struct bnxt *bp, bool reconfig_dev)
 	bnxt_uninit_ctx_mem(bp);
 
 	bnxt_free_flow_stats_info(bp);
-	if (bp->rep_info != NULL)
-		bnxt_free_switch_domain(bp);
-	bnxt_free_rep_info(bp);
+	bnxt_free_switch_domain(bp);
 	rte_free(bp->ptp_cfg);
 	bp->ptp_cfg = NULL;
 	return rc;

@@ -14,6 +14,7 @@
 #include <rte_flow.h>
 #include <rte_ipsec.h>
 
+#include "event_helper.h"
 #include "ipsec-secgw.h"
 
 #define RTE_LOGTYPE_IPSEC_ESP   RTE_LOGTYPE_USER2
@@ -42,6 +43,8 @@
 	((((t) & RTE_IPSEC_SATP_MODE_MASK) == RTE_IPSEC_SATP_MODE_TRANS && \
 	(((t) & RTE_IPSEC_SATP_IPV_MASK) == RTE_IPSEC_SATP_IPV4)) || \
 	((t) & RTE_IPSEC_SATP_MODE_MASK) == RTE_IPSEC_SATP_MODE_TUNLV4)
+
+#define BAD_PORT	((uint16_t)-1)
 
 struct rte_crypto_xform;
 struct ipsec_xform;
@@ -129,6 +132,7 @@ struct ipsec_sa {
 #define IP4_TRANSPORT (1 << 3)
 #define IP6_TRANSPORT (1 << 4)
 #define SA_TELEMETRY_ENABLE (1 << 5)
+#define SA_REASSEMBLY_ENABLE (1 << 6)
 
 	struct ip_addr src;
 	struct ip_addr dst;
@@ -205,6 +209,7 @@ struct ipsec_mbuf_metadata {
 
 #define IS_IP6_TUNNEL(flags) ((flags) & IP6_TUNNEL)
 
+#define IS_HW_REASSEMBLY_EN(flags) ((flags) & SA_REASSEMBLY_ENABLE)
 /*
  * Macro for getting ipsec_sa flags statuses without version of protocol
  * used for transport (IP4_TRANSPORT and IP6_TRANSPORT flags).
@@ -256,7 +261,6 @@ struct socket_ctx {
 	struct rte_mempool *mbuf_pool[RTE_MAX_ETHPORTS];
 	struct rte_mempool *mbuf_pool_indir;
 	struct rte_mempool *session_pool;
-	struct rte_mempool *session_priv_pool;
 };
 
 struct cnt_blk {
@@ -424,14 +428,15 @@ sa_spi_present(struct sa_ctx *sa_ctx, uint32_t spi, int inbound);
 
 void
 sa_init(struct socket_ctx *ctx, int32_t socket_id,
-		struct lcore_conf *lcore_conf);
+	struct lcore_conf *lcore_conf,
+	const struct eventmode_conf *em_conf);
 
 void
 rt_init(struct socket_ctx *ctx, int32_t socket_id);
 
 int
 sa_check_offloads(uint16_t port_id, uint64_t *rx_offloads,
-		uint64_t *tx_offloads);
+		uint64_t *tx_offloads, uint8_t *hw_reassembly);
 
 int
 add_dst_ethaddr(uint16_t port, const struct rte_ether_addr *addr);
@@ -441,8 +446,8 @@ enqueue_cop_burst(struct cdev_qp *cqp);
 
 int
 create_lookaside_session(struct ipsec_ctx *ipsec_ctx[],
-	struct socket_ctx *skt_ctx, struct ipsec_sa *sa,
-	struct rte_ipsec_session *ips);
+	struct socket_ctx *skt_ctx, const struct eventmode_conf *em_conf,
+	struct ipsec_sa *sa, struct rte_ipsec_session *ips);
 
 int
 create_inline_session(struct socket_ctx *skt_ctx, struct ipsec_sa *sa,

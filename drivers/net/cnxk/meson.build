@@ -10,6 +10,7 @@ endif
 
 sources = files(
         'cnxk_ethdev.c',
+        'cnxk_ethdev_cman.c',
         'cnxk_ethdev_devargs.c',
         'cnxk_ethdev_mtr.c',
         'cnxk_ethdev_ops.c',
@@ -194,3 +195,4 @@ foreach flag: extra_flags
 endforeach
 
 headers = files('rte_pmd_cnxk.h')
+pmd_supports_disable_iova_as_pa = true

@@ -67,7 +67,7 @@ roc_nix_tm_sq_aura_fc(struct roc_nix_sq *sq, bool enable)
 	if (enable)
 		*(volatile uint64_t *)sq->fc = rsp->aura.count;
 	else
-		*(volatile uint64_t *)sq->fc = sq->nb_sqb_bufs;
+		*(volatile uint64_t *)sq->fc = sq->aura_sqb_bufs;
 	/* Sync write barrier */
 	plt_wmb();
 	return 0;
@@ -535,7 +535,7 @@ roc_nix_tm_hierarchy_disable(struct roc_nix *roc_nix)
 		tail_off = (val >> 28) & 0x3F;
 
 		if (sqb_cnt > 1 || head_off != tail_off ||
-		    (*(uint64_t *)sq->fc != sq->nb_sqb_bufs))
+		    (*(uint64_t *)sq->fc != sq->aura_sqb_bufs))
 			plt_err("Failed to gracefully flush sq %u", sq->qid);
 	}
 
@@ -891,19 +891,29 @@ roc_nix_tm_node_parent_update(struct roc_nix *roc_nix, uint32_t node_id,
 		TAILQ_FOREACH(sibling, list, node) {
 			if (sibling->parent != node->parent)
 				continue;
-			k += nix_tm_sw_xoff_prep(sibling, true, &req->reg[k],
-						 &req->regval[k]);
+			k += nix_tm_sw_xoff_prep(sibling, true, &req->reg[k], &req->regval[k]);
+			if (k >= MAX_REGS_PER_MBOX_MSG) {
+				req->num_regs = k;
+				rc = mbox_process(mbox);
+				if (rc)
+					return rc;
+				k = 0;
+				req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+				req->lvl = node->hw_lvl;
+			}
 		}
-		req->num_regs = k;
-		rc = mbox_process(mbox);
-		if (rc)
-			return rc;
 
-		/* Update new weight for current node */
-		req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+		if (k) {
+			req->num_regs = k;
+			rc = mbox_process(mbox);
+			if (rc)
+				return rc;
+			/* Update new weight for current node */
+			req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+		}
+
 		req->lvl = node->hw_lvl;
-		req->num_regs =
-			nix_tm_sched_reg_prep(nix, node, req->reg, req->regval);
+		req->num_regs = nix_tm_sched_reg_prep(nix, node, req->reg, req->regval);
 		rc = mbox_process(mbox);
 		if (rc)
 			return rc;
@@ -916,19 +926,29 @@ roc_nix_tm_node_parent_update(struct roc_nix *roc_nix, uint32_t node_id,
 		TAILQ_FOREACH(sibling, list, node) {
 			if (sibling->parent != node->parent)
 				continue;
-			k += nix_tm_sw_xoff_prep(sibling, false, &req->reg[k],
-						 &req->regval[k]);
+			k += nix_tm_sw_xoff_prep(sibling, false, &req->reg[k], &req->regval[k]);
+			if (k >= MAX_REGS_PER_MBOX_MSG) {
+				req->num_regs = k;
+				rc = mbox_process(mbox);
+				if (rc)
+					return rc;
+				k = 0;
+				req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+				req->lvl = node->hw_lvl;
+			}
 		}
-		req->num_regs = k;
-		rc = mbox_process(mbox);
-		if (rc)
-			return rc;
 
-		/* XON Parent node */
-		req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+		if (k) {
+			req->num_regs = k;
+			rc = mbox_process(mbox);
+			if (rc)
+				return rc;
+			/* XON Parent node */
+			req = mbox_alloc_msg_nix_txschq_cfg(mbox);
+		}
+
 		req->lvl = node->parent->hw_lvl;
-		req->num_regs = nix_tm_sw_xoff_prep(node->parent, false,
-						    req->reg, req->regval);
+		req->num_regs = nix_tm_sw_xoff_prep(node->parent, false, req->reg, req->regval);
 		rc = mbox_process(mbox);
 		if (rc)
 			return rc;

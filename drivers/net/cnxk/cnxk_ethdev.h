@@ -44,6 +44,8 @@
 #define CNXK_NIX_RX_DEFAULT_RING_SZ 4096
 /* Max supported SQB count */
 #define CNXK_NIX_TX_MAX_SQB 512
+/* LPB & SPB */
+#define CNXK_NIX_NUM_POOLS_MAX 2
 
 /* If PTP is enabled additional SEND MEM DESC is required which
  * takes 2 words, hence max 7 iova address are possible
@@ -273,8 +275,11 @@ TAILQ_HEAD(cnxk_eth_sec_sess_list, cnxk_eth_sec_sess);
 
 /* Inbound security data */
 struct cnxk_eth_dev_sec_inb {
+	/* IPSec inbound min SPI */
+	uint32_t min_spi;
+
 	/* IPSec inbound max SPI */
-	uint16_t max_spi;
+	uint32_t max_spi;
 
 	/* Using inbound with inline device */
 	bool inl_dev;
@@ -408,10 +413,14 @@ struct cnxk_eth_dev {
 	uint64_t clk_delta;
 
 	/* Ingress policer */
-	enum roc_nix_bpf_color precolor_tbl[ROC_NIX_BPF_PRE_COLOR_MAX];
+	enum roc_nix_bpf_color precolor_tbl[ROC_NIX_BPF_PRECOLOR_TBL_SIZE_DSCP];
+	enum rte_mtr_color_in_protocol proto;
 	struct cnxk_mtr_profiles mtr_profiles;
 	struct cnxk_mtr_policy mtr_policy;
 	struct cnxk_mtr mtr;
+
+	/* Congestion Management */
+	struct rte_eth_cman_config cman_cfg;
 
 	/* Rx burst for cleanup(Only Primary) */
 	eth_rx_burst_t rx_pkt_burst_no_offload;
@@ -554,7 +563,7 @@ int cnxk_nix_read_clock(struct rte_eth_dev *eth_dev, uint64_t *clock);
 uint64_t cnxk_nix_rxq_mbuf_setup(struct cnxk_eth_dev *dev);
 int cnxk_nix_tm_ops_get(struct rte_eth_dev *eth_dev, void *ops);
 int cnxk_nix_tm_set_queue_rate_limit(struct rte_eth_dev *eth_dev,
-				     uint16_t queue_idx, uint16_t tx_rate);
+				     uint16_t queue_idx, uint32_t tx_rate);
 int cnxk_nix_tm_mark_vlan_dei(struct rte_eth_dev *eth_dev, int mark_green,
 			      int mark_yellow, int mark_red,
 			      struct rte_tm_error *error);
@@ -581,6 +590,7 @@ int cnxk_nix_rss_hash_update(struct rte_eth_dev *eth_dev,
 			     struct rte_eth_rss_conf *rss_conf);
 int cnxk_nix_rss_hash_conf_get(struct rte_eth_dev *eth_dev,
 			       struct rte_eth_rss_conf *rss_conf);
+int cnxk_nix_eth_dev_priv_dump(struct rte_eth_dev *eth_dev, FILE *file);
 
 /* Link */
 void cnxk_nix_toggle_flag_link_cfg(struct cnxk_eth_dev *dev, bool set);
@@ -641,6 +651,17 @@ struct cnxk_eth_sec_sess *cnxk_eth_sec_sess_get_by_spi(struct cnxk_eth_dev *dev,
 struct cnxk_eth_sec_sess *
 cnxk_eth_sec_sess_get_by_sess(struct cnxk_eth_dev *dev,
 			      struct rte_security_session *sess);
+int cnxk_nix_inl_meta_pool_cb(uint64_t *aura_handle, uint32_t buf_sz, uint32_t nb_bufs,
+			      bool destroy);
+
+/* Congestion Management */
+int cnxk_nix_cman_info_get(struct rte_eth_dev *dev, struct rte_eth_cman_info *info);
+
+int cnxk_nix_cman_config_init(struct rte_eth_dev *dev, struct rte_eth_cman_config *config);
+
+int cnxk_nix_cman_config_set(struct rte_eth_dev *dev, const struct rte_eth_cman_config *config);
+
+int cnxk_nix_cman_config_get(struct rte_eth_dev *dev, struct rte_eth_cman_config *config);
 
 /* Other private functions */
 int nix_recalc_mtu(struct rte_eth_dev *eth_dev);
@@ -690,7 +711,7 @@ cnxk_pktmbuf_detach(struct rte_mbuf *m)
 
 	m->priv_size = priv_size;
 	m->buf_addr = (char *)m + mbuf_size;
-	m->buf_iova = rte_mempool_virt2iova(m) + mbuf_size;
+	rte_mbuf_iova_set(m, rte_mempool_virt2iova(m) + mbuf_size);
 	m->buf_len = (uint16_t)buf_len;
 	rte_pktmbuf_reset_headroom(m);
 	m->data_len = 0;

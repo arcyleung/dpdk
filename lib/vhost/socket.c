@@ -228,7 +228,8 @@ vhost_user_add_connection(int fd, struct vhost_user_socket *vsocket)
 	vhost_set_ifname(vid, vsocket->path, size);
 
 	vhost_setup_virtio_net(vid, vsocket->use_builtin_virtio_net,
-		vsocket->net_compliant_ol_flags, vsocket->stats_enabled);
+		vsocket->net_compliant_ol_flags, vsocket->stats_enabled,
+		vsocket->iommu_support);
 
 	vhost_attach_vdpa_device(vid, vsocket->vdpa_dev);
 
@@ -626,7 +627,6 @@ rte_vhost_driver_get_vdpa_dev_type(const char *path, uint32_t *type)
 {
 	struct vhost_user_socket *vsocket;
 	struct rte_vdpa_device *vdpa_dev;
-	uint32_t vdpa_type = 0;
 	int ret = 0;
 
 	pthread_mutex_lock(&vhost_user.mutex);
@@ -643,19 +643,7 @@ rte_vhost_driver_get_vdpa_dev_type(const char *path, uint32_t *type)
 		goto unlock_exit;
 	}
 
-	if (vdpa_dev->ops->get_dev_type) {
-		ret = vdpa_dev->ops->get_dev_type(vdpa_dev, &vdpa_type);
-		if (ret) {
-			VHOST_LOG_CONFIG(path, ERR,
-				"failed to get vdpa dev type for socket file.\n");
-			ret = -1;
-			goto unlock_exit;
-		}
-	} else {
-		vdpa_type = RTE_VHOST_VDPA_DEVICE_TYPE_NET;
-	}
-
-	*type = vdpa_type;
+	*type = vdpa_dev->type;
 
 unlock_exit:
 	pthread_mutex_unlock(&vhost_user.mutex);
@@ -905,6 +893,7 @@ rte_vhost_driver_register(const char *path, uint64_t flags)
 	vsocket->async_copy = flags & RTE_VHOST_USER_ASYNC_COPY;
 	vsocket->net_compliant_ol_flags = flags & RTE_VHOST_USER_NET_COMPLIANT_OL_FLAGS;
 	vsocket->stats_enabled = flags & RTE_VHOST_USER_NET_STATS_ENABLE;
+	vsocket->iommu_support = flags & RTE_VHOST_USER_IOMMU_SUPPORT;
 
 	if (vsocket->async_copy &&
 		(flags & (RTE_VHOST_USER_IOMMU_SUPPORT |

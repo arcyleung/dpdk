@@ -148,6 +148,13 @@ struct iavf_fdir_info {
 	struct iavf_fdir_conf conf;
 };
 
+struct iavf_fsub_conf {
+	struct virtchnl_flow_sub sub_fltr;
+	struct virtchnl_flow_unsub unsub_fltr;
+	uint64_t input_set;
+	uint32_t flow_id;
+};
+
 struct iavf_qv_map {
 	uint16_t queue_id;
 	uint16_t vector_id;
@@ -417,6 +424,8 @@ _atomic_set_async_response_cmd(struct iavf_info *vf, enum virtchnl_ops ops)
 }
 int iavf_check_api_version(struct iavf_adapter *adapter);
 int iavf_get_vf_resource(struct iavf_adapter *adapter);
+void iavf_dev_event_handler_fini(void);
+int iavf_dev_event_handler_init(void);
 void iavf_handle_virtchnl_msg(struct rte_eth_dev *dev);
 int iavf_enable_vlan_strip(struct iavf_adapter *adapter);
 int iavf_disable_vlan_strip(struct iavf_adapter *adapter);
@@ -482,4 +491,10 @@ int iavf_ipsec_crypto_request(struct iavf_adapter *adapter,
 extern const struct rte_tm_ops iavf_tm_ops;
 int iavf_get_ptp_cap(struct iavf_adapter *adapter);
 int iavf_get_phc_time(struct iavf_rx_queue *rxq);
+int iavf_flow_sub(struct iavf_adapter *adapter,
+		  struct iavf_fsub_conf *filter);
+int iavf_flow_unsub(struct iavf_adapter *adapter,
+		    struct iavf_fsub_conf *filter);
+int iavf_flow_sub_check(struct iavf_adapter *adapter,
+			struct iavf_fsub_conf *filter);
 #endif /* _IAVF_ETHDEV_H_ */

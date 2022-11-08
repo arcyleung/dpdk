@@ -226,6 +226,12 @@ if jansson_dep.found()
     dpdk_conf.set('RTE_HAS_JANSSON', 1)
 endif
 
+# check for OpenSSL
+openssl_dep = dependency('openssl', required: false, method: 'pkg-config')
+if openssl_dep.found()
+    dpdk_conf.set('RTE_HAS_OPENSSL', 1)
+endif
+
 # check for pcap
 pcap_dep = dependency('libpcap', required: false, method: 'pkg-config')
 pcap_lib = is_windows ? 'wpcap' : 'pcap'
@@ -309,6 +315,7 @@ endif
 if get_option('mbuf_refcnt_atomic')
     dpdk_conf.set('RTE_MBUF_REFCNT_ATOMIC', true)
 endif
+dpdk_conf.set10('RTE_IOVA_AS_PA', get_option('enable_iova_as_pa'))
 
 compile_time_cpuflags = []
 subdir(arch_subdir)

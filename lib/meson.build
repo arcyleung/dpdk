@@ -85,9 +85,17 @@ optional_libs = [
         'vhost',
 ]
 
+dpdk_libs_deprecated += [
+        'flow_classify',
+        'kni',
+]
+
 disabled_libs = []
 opt_disabled_libs = run_command(list_dir_globs, get_option('disable_libs'),
         check: true).stdout().split()
+if dpdk_conf.get('RTE_IOVA_AS_PA') == 0
+    opt_disabled_libs += ['kni']
+endif
 foreach l:opt_disabled_libs
     if not optional_libs.contains(l)
         warning('Cannot disable mandatory library "@0@"'.format(l))
@@ -133,7 +141,13 @@ foreach l:libraries
     if disabled_libs.contains(l)
         build = false
         reason = 'explicitly disabled via build config'
+        if dpdk_libs_deprecated.contains(l)
+            reason += ' (deprecated lib)'
+        endif
     else
+        if dpdk_libs_deprecated.contains(l)
+            warning('Enabling deprecated library, "@0@"'.format(l))
+        endif
         subdir(l)
     endif
     if name != l
@@ -149,6 +163,9 @@ foreach l:libraries
         if not is_variable('shared_rte_' + d)
             build = false
             reason = 'missing internal dependency, "@0@"'.format(d)
+            if dpdk_libs_deprecated.contains(d)
+                reason += ' (deprecated lib)'
+            endif
             message('Disabling @1@ [@2@]: missing internal dependency "@0@"'
                     .format(d, name, 'lib/' + l))
         else
@@ -175,6 +192,7 @@ foreach l:libraries
 
     libname = 'rte_' + name
     includes += include_directories(l)
+    dpdk_includes += include_directories(l)
 
     if developer_mode and is_windows and use_function_versioning
         message('@0@: Function versioning is not supported by Windows.'.format(name))

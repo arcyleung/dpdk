@@ -157,6 +157,18 @@ Runtime Config Options
    With the above configuration, each send queue's descriptor buffer count is
    limited to a maximum of 64 buffers.
 
+- ``SQB slack count`` (default ``12``)
+
+   Send queue descriptor slack count added to SQB count when a Tx queue is
+   created, can be set using ``sqb_slack`` ``devargs`` parameter.
+
+   For example::
+
+      -a 0002:02:00.0,sqb_slack=32
+
+   With the above configuration, each send queue's descriptor buffer count will
+   be increased by 32, while keeping the queue limit to default configuration.
+
 - ``Switch header enable`` (default ``none``)
 
    A port can be configured to a specific switch header type by using
@@ -386,6 +398,11 @@ RTE flow GRE support
 - ``RTE_FLOW_ITEM_TYPE_GRE_KEY`` works only when checksum and routing
   bits in the GRE header are equal to 0.
 
+RTE flow action represented_port support
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT`` only works between a PF and its VFs.
+
 RTE flow action port_id support
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -477,6 +494,45 @@ Runtime Config Options for inline device
    With the above configuration, application can enable inline IPsec processing
    for inbound SA with max SPI of 128 for traffic aggregated on inline device.
 
+- ``Count of meta buffers for inline inbound IPsec second pass``
+
+   Number of meta buffers allocated for inline inbound IPsec second pass can
+   be specified by ``nb_meta_bufs`` ``devargs`` parameter. Default value is
+   computed runtime based on pkt mbuf pools created and in use. Number of meta
+   buffers should be at least equal to aggregated number of packet buffers of all
+   packet mbuf pools in use by Inline IPsec enabled ethernet devices.
+
+   For example::
+
+      -a 0002:1d:00.0,nb_meta_bufs=1024
+
+   With the above configuration, PMD would enable inline IPsec processing
+   for inbound with 1024 meta buffers available for second pass.
+
+- ``Meta buffer size for inline inbound IPsec second pass``
+
+   Size of meta buffer allocated for inline inbound IPsec second pass can
+   be specified by ``meta_buf_sz`` ``devargs`` parameter. Default value is
+   computed runtime based on pkt mbuf pools created and in use.
+
+   For example::
+
+      -a 0002:1d:00.0,meta_buf_sz=512
+
+   With the above configuration, PMD would allocate meta buffers of size 512 for
+   inline inbound IPsec processing second pass.
+
+- ``Inline Outbound soft expiry poll frequency in usec`` (default ``100``)
+
+   Soft expiry poll frequency for Inline Outbound sessions can be specified by
+   ``soft_exp_poll_freq`` ``devargs`` parameter.
+
+   For example::
+
+      -a 0002:1d:00.0,soft_exp_poll_freq=1000
+
+   With the above configuration, driver would poll for soft expiry events every
+   1000 usec.
 
 Debugging Options
 -----------------

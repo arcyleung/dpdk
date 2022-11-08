@@ -13,6 +13,8 @@
 #define ROC_NIX_BPF_STATS_MAX	      12
 #define ROC_NIX_MTR_ID_INVALID	      UINT32_MAX
 #define ROC_NIX_PFC_CLASS_INVALID     UINT8_MAX
+#define ROC_NIX_SQB_LOWER_THRESH      70U
+#define ROC_NIX_SQB_SLACK	      12U
 
 enum roc_nix_rss_reta_sz {
 	ROC_NIX_RSS_RETA_SZ_64 = 64,
@@ -41,6 +43,12 @@ enum roc_nix_bpf_level_flag {
 	ROC_NIX_BPF_LEVEL_F_LEAF = BIT(0),
 	ROC_NIX_BPF_LEVEL_F_MID = BIT(1),
 	ROC_NIX_BPF_LEVEL_F_TOP = BIT(2),
+};
+
+enum roc_nix_bpf_precolor_tbl_size {
+	ROC_NIX_BPF_PRECOLOR_TBL_SIZE_GEN = 16,
+	ROC_NIX_BPF_PRECOLOR_TBL_SIZE_VLAN = 16,
+	ROC_NIX_BPF_PRECOLOR_TBL_SIZE_DSCP = 64,
 };
 
 enum roc_nix_bpf_pc_mode {
@@ -279,6 +287,7 @@ struct roc_nix_stats_queue {
 struct roc_nix_rq {
 	/* Input parameters */
 	uint16_t qid;
+	uint16_t cqid; /* Not valid when SSO is enabled */
 	uint16_t bpf_id;
 	uint64_t aura_handle;
 	bool ipsech_ena;
@@ -306,6 +315,10 @@ struct roc_nix_rq {
 	/* Average SPB aura level drop threshold for RED */
 	uint8_t spb_red_drop;
 	/* Average SPB aura level pass threshold for RED */
+	uint8_t xqe_red_pass;
+	/* Average xqe level drop threshold for RED */
+	uint8_t xqe_red_drop;
+	/* Average xqe level pass threshold for RED */
 	uint8_t spb_red_pass;
 	/* LPB aura drop enable */
 	bool lpb_drop_ena;
@@ -313,6 +326,7 @@ struct roc_nix_rq {
 	bool spb_drop_ena;
 	/* End of Input parameters */
 	struct roc_nix *roc_nix;
+	uint64_t meta_aura_handle;
 	uint16_t inl_dev_refs;
 };
 
@@ -337,6 +351,7 @@ struct roc_nix_sq {
 	uint32_t nb_desc;
 	uint16_t qid;
 	uint16_t cqid;
+	uint16_t cq_drop_thresh;
 	bool sso_ena;
 	bool cq_ena;
 	/* End of Input parameters */
@@ -402,23 +417,26 @@ struct roc_nix {
 	uint16_t max_sqb_count;
 	enum roc_nix_rss_reta_sz reta_sz;
 	bool enable_loop;
+	bool tx_compl_ena;
 	bool hw_vlan_ins;
 	uint8_t lock_rx_ctx;
-	uint32_t outb_nb_desc;
+	uint16_t sqb_slack;
 	uint16_t outb_nb_crypto_qs;
+	uint32_t outb_nb_desc;
 	uint32_t ipsec_in_min_spi;
 	uint32_t ipsec_in_max_spi;
 	uint32_t ipsec_out_max_sa;
+	uint32_t dwrr_mtu;
 	bool ipsec_out_sso_pffunc;
+	bool custom_sa_action;
 	/* End of input parameters */
 	/* LMT line base for "Per Core Tx LMT line" mode*/
 	uintptr_t lmt_base;
 	bool io_enabled;
 	bool rx_ptp_ena;
 	uint16_t cints;
-	bool custom_sa_action;
 
-#define ROC_NIX_MEM_SZ (6 * 1024)
+#define ROC_NIX_MEM_SZ (6 * 1056)
 	uint8_t reserved[ROC_NIX_MEM_SZ] __plt_cache_aligned;
 } __plt_cache_aligned;
 
@@ -480,13 +498,13 @@ int __roc_api roc_nix_rx_drop_re_set(struct roc_nix *roc_nix, bool ena);
 /* Debug */
 int __roc_api roc_nix_lf_get_reg_count(struct roc_nix *roc_nix);
 int __roc_api roc_nix_lf_reg_dump(struct roc_nix *roc_nix, uint64_t *data);
-int __roc_api roc_nix_queues_ctx_dump(struct roc_nix *roc_nix);
+int __roc_api roc_nix_queues_ctx_dump(struct roc_nix *roc_nix, FILE *file);
 void __roc_api roc_nix_cqe_dump(const struct nix_cqe_hdr_s *cq);
-void __roc_api roc_nix_rq_dump(struct roc_nix_rq *rq);
-void __roc_api roc_nix_cq_dump(struct roc_nix_cq *cq);
-void __roc_api roc_nix_sq_dump(struct roc_nix_sq *sq);
-void __roc_api roc_nix_tm_dump(struct roc_nix *roc_nix);
-void __roc_api roc_nix_dump(struct roc_nix *roc_nix);
+void __roc_api roc_nix_rq_dump(struct roc_nix_rq *rq, FILE *file);
+void __roc_api roc_nix_cq_dump(struct roc_nix_cq *cq, FILE *file);
+void __roc_api roc_nix_sq_dump(struct roc_nix_sq *sq, FILE *file);
+void __roc_api roc_nix_tm_dump(struct roc_nix *roc_nix, FILE *file);
+void __roc_api roc_nix_dump(struct roc_nix *roc_nix, FILE *file);
 
 /* IRQ */
 void __roc_api roc_nix_rx_queue_intr_enable(struct roc_nix *roc_nix,
@@ -562,6 +580,7 @@ struct roc_nix_tm_shaper_profile {
 	int32_t pkt_len_adj;
 	bool pkt_mode;
 	int8_t accuracy;
+	uint8_t red_algo;
 	/* Function to free this memory */
 	void (*free_fn)(void *profile);
 };
@@ -855,6 +874,7 @@ int __roc_api roc_nix_rq_init(struct roc_nix *roc_nix, struct roc_nix_rq *rq,
 			      bool ena);
 int __roc_api roc_nix_rq_modify(struct roc_nix *roc_nix, struct roc_nix_rq *rq,
 				bool ena);
+int __roc_api roc_nix_rq_cman_config(struct roc_nix *roc_nix, struct roc_nix_rq *rq);
 int __roc_api roc_nix_rq_ena_dis(struct roc_nix_rq *rq, bool enable);
 int __roc_api roc_nix_rq_is_sso_enable(struct roc_nix *roc_nix, uint32_t qid);
 int __roc_api roc_nix_rq_fini(struct roc_nix_rq *rq);

@@ -256,10 +256,6 @@ nix_tm_node_add(struct roc_nix *roc_nix, struct nix_tm_node *node)
 	if (node->weight > roc_nix_tm_max_sched_wt_get())
 		return NIX_ERR_TM_WEIGHT_EXCEED;
 
-	/* Maintain minimum weight */
-	if (!node->weight)
-		node->weight = 1;
-
 	node->hw_lvl = nix_tm_lvl2nix(nix, lvl);
 	node->rr_prio = 0xF;
 	node->max_prio = UINT32_MAX;
@@ -594,7 +590,7 @@ roc_nix_tm_sq_flush_spin(struct roc_nix_sq *sq)
 
 		/* SQ reached quiescent state */
 		if (sqb_cnt <= 1 && head_off == tail_off &&
-		    (*(volatile uint64_t *)sq->fc == sq->nb_sqb_bufs)) {
+		    (*(volatile uint64_t *)sq->fc == sq->aura_sqb_bufs)) {
 			break;
 		}
 
@@ -606,8 +602,8 @@ roc_nix_tm_sq_flush_spin(struct roc_nix_sq *sq)
 
 	return 0;
 exit:
-	roc_nix_tm_dump(sq->roc_nix);
-	roc_nix_queues_ctx_dump(sq->roc_nix);
+	roc_nix_tm_dump(sq->roc_nix, NULL);
+	roc_nix_queues_ctx_dump(sq->roc_nix, NULL);
 	return -EFAULT;
 }
 

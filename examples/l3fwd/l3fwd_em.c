@@ -247,6 +247,14 @@ em_mask_key(void *key, xmm_t mask)
 
 	return vect_and(data, mask);
 }
+#elif defined(RTE_ARCH_LOONGARCH)
+static inline xmm_t
+em_mask_key(void *key, xmm_t mask)
+{
+	xmm_t data = vect_load_128(key);
+
+	return vect_and(data, mask);
+}
 #else
 #error No vector engine (SSE, NEON, ALTIVEC) available, check your toolchain
 #endif
@@ -403,7 +411,7 @@ populate_ipv4_flow_into_table(const struct rte_hash *h)
 			   em_route_base_v4[i].v4_key.port_dst,
 			   em_route_base_v4[i].v4_key.port_src,
 			   em_route_base_v4[i].v4_key.proto,
-		       em_route_base_v4[i].if_out, dev_info.device->name);
+		       em_route_base_v4[i].if_out, rte_dev_name(dev_info.device));
 	}
 	printf("Hash: Adding 0x%" PRIx64 " keys\n",
 		(uint64_t)route_num_v4);
@@ -455,7 +463,7 @@ populate_ipv6_flow_into_table(const struct rte_hash *h)
 			   em_route_base_v6[i].v6_key.port_dst,
 			   em_route_base_v6[i].v6_key.port_src,
 			   em_route_base_v6[i].v6_key.proto,
-		       em_route_base_v6[i].if_out, dev_info.device->name);
+		       em_route_base_v6[i].if_out, rte_dev_name(dev_info.device));
 	}
 	printf("Hash: Adding 0x%" PRIx64 "keys\n",
 		(uint64_t)route_num_v6);
@@ -852,10 +860,15 @@ em_event_loop_vector(struct l3fwd_event_resources *evt_rsrc,
 	int i, nb_enq = 0, nb_deq = 0;
 	struct lcore_conf *lconf;
 	unsigned int lcore_id;
+	uint16_t *dst_ports;
 
 	if (event_p_id < 0)
 		return;
 
+	dst_ports = rte_zmalloc("", sizeof(uint16_t) * evt_rsrc->vector_size,
+				RTE_CACHE_LINE_SIZE);
+	if (dst_ports == NULL)
+		return;
 	lcore_id = rte_lcore_id();
 	lconf = &lcore_conf[lcore_id];
 
@@ -877,13 +890,12 @@ em_event_loop_vector(struct l3fwd_event_resources *evt_rsrc,
 			}
 
 #if defined RTE_ARCH_X86 || defined __ARM_NEON
-			l3fwd_em_process_event_vector(events[i].vec, lconf);
+			l3fwd_em_process_event_vector(events[i].vec, lconf,
+						      dst_ports);
 #else
 			l3fwd_em_no_opt_process_event_vector(events[i].vec,
-							     lconf);
+							     lconf, dst_ports);
 #endif
-			if (flags & L3FWD_EVENT_TX_DIRECT)
-				event_vector_txq_set(events[i].vec, 0);
 		}
 
 		if (flags & L3FWD_EVENT_TX_ENQ) {
@@ -907,6 +919,7 @@ em_event_loop_vector(struct l3fwd_event_resources *evt_rsrc,
 
 	l3fwd_event_worker_cleanup(event_d_id, event_p_id, events, nb_enq,
 				   nb_deq, 1);
+	rte_free(dst_ports);
 }
 
 int __rte_noinline

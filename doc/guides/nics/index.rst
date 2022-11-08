@@ -29,10 +29,12 @@ Network Interface Controller Drivers
     enetfec
     enic
     fm10k
+    gve
     hinic
     hns3
     i40e
     ice
+    idpf
     igb
     igc
     ionic
@@ -41,6 +43,7 @@ Network Interface Controller Drivers
     intel_vf
     kni
     liquidio
+    mana
     memif
     mlx4
     mlx5
@@ -52,7 +55,7 @@ Network Interface Controller Drivers
     ngbe
     null
     octeontx
-    octeontx_ep
+    octeon_ep
     pfe
     qede
     sfc_efx

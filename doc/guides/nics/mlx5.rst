@@ -4,8 +4,15 @@
 
 .. include:: <isonum.txt>
 
-MLX5 Ethernet Poll Mode Driver
-==============================
+NVIDIA MLX5 Ethernet Driver
+===========================
+
+.. note::
+
+   NVIDIA acquired Mellanox Technologies in 2020.
+   The DPDK documentation and code might still include instances
+   of or references to Mellanox trademarks (like BlueField and ConnectX)
+   that are now NVIDIA trademarks.
 
 The mlx5 Ethernet poll mode driver library (**librte_net_mlx5**) provides support
 for **NVIDIA ConnectX-4**, **NVIDIA ConnectX-4 Lx** , **NVIDIA ConnectX-5**,
@@ -29,7 +36,8 @@ This means legacy linux control tools (for example: ethtool, ifconfig and
 more) can operate on the same network interfaces that owned by the DPDK
 application.
 
-See :doc:`../../platform/mlx5` guide for more design details.
+See :doc:`../../platform/mlx5` guide for more design details,
+including prerequisites installation.
 
 Features
 --------
@@ -92,6 +100,7 @@ Features
   flow group.
 - Flow metering, including meter policy API.
 - Flow meter hierarchy.
+- Flow meter mark.
 - Flow integrity offload API.
 - Connection tracking.
 - Sub-Function representors.
@@ -143,6 +152,15 @@ Limitations
   - Support BlueField series NIC from BlueField 2.
   - When configuring host shaper with MLX5_HOST_SHAPER_FLAG_AVAIL_THRESH_TRIGGERED flag set,
     only rates 0 and 100Mbps are supported.
+
+- HW steering:
+
+  - WQE based high scaling and safer flow insertion/destruction.
+  - Set ``dv_flow_en`` to 2 in order to enable HW steering.
+  - Async queue-based ``rte_flow_async`` APIs supported only.
+  - NIC ConnectX-5 and before are not supported.
+  - Partial match with item template is not supported.
+  - IPv6 5-tuple matching is not supported.
 
 - When using Verbs flow engine (``dv_flow_en`` = 0), flow pattern without any
   specific VLAN will match for VLAN packets as well:
@@ -441,6 +459,22 @@ Limitations
     The modify field action is not intended to modify VLAN headers type field,
     dedicated VLAN push and pop actions should be used instead.
 
+- Age action:
+
+  - with HW steering (``dv_flow_en=2``)
+
+    - Using the same indirect count action combined with multiple age actions
+      in different flows may cause a wrong age state for the age actions.
+    - Creating/destroying flow rules with indirect age action when it is active
+      (timeout != 0) may cause a wrong age state for the indirect age action.
+
+    - The driver reuses counters for aging action, so for optimization
+      the values in ``rte_flow_port_attr`` structure should describe:
+
+      - ``nb_counters`` is the number of flow rules using counter (with/without age)
+        in addition to flow rules using only age (without count action).
+      - ``nb_aging_objects`` is the number of flow rules containing age action.
+
 - IPv6 header item 'proto' field, indicating the next header protocol, should
   not be set as extension header.
   In case the next header is an extension header, it should not be specified in
@@ -473,6 +507,12 @@ Limitations
   - meter profile packet mode is supported.
   - meter profiles of RFC2697, RFC2698 and RFC4115 are supported.
   - RFC4115 implementation is following MEF, meaning yellow traffic may reclaim unused green bandwidth when green token bucket is full.
+  - When using DV flow engine (``dv_flow_en`` = 1),
+    if meter has drop count
+    or meter hierarchy contains any meter that uses drop count,
+    it cannot be used by flow rule matching all ports.
+  - When using HWS flow engine (``dv_flow_en`` = 2),
+    only meter mark action is supported.
 
 - Integrity:
 
@@ -494,7 +534,7 @@ Limitations
   - Cannot co-exist with ASO meter, ASO age action in a single flow rule.
   - Flow rules insertion rate and memory consumption need more optimization.
   - 256 ports maximum.
-  - 4M connections maximum.
+  - 4M connections maximum with ``dv_flow_en`` 1 mode. 16M with ``dv_flow_en`` 2.
 
 - Multi-thread flow insertion:
 
@@ -507,7 +547,7 @@ Limitations
 
 - Bonding under socket direct mode
 
-  - Needs OFED 5.4+.
+  - Needs MLNX_OFED 5.4+.
 
 - Timestamps:
 
@@ -523,12 +563,6 @@ Limitations
     from the reference "Clock Queue" completions,
     the scheduled send timestamps should not be specified with non-zero MSB.
 
-  - HW steering:
-
-    - WQE based high scaling and safer flow insertion/destruction.
-    - Set ``dv_flow_en`` to 2 in order to enable HW steering.
-    - Async queue-based ``rte_flow_q`` APIs supported only.
-
 - Match on GRE header supports the following fields:
 
   - c_rsvd0_v: C bit, K bit, S bit
@@ -537,7 +571,7 @@ Limitations
   - key
   - sequence
 
-  Matching on checksum and sequence needs OFED 5.6+.
+  Matching on checksum and sequence needs MLNX_OFED 5.6+.
 
 - The NIC egress flow rules on representor port are not supported.
 
@@ -632,7 +666,7 @@ for an additional list of options shared with other mlx5 drivers.
   dropping a packet. Once the timer is expired, the delay drop will be
   deactivated for all the Rx queues with this feature enable. To re-activate
   it, a rearming is needed and it is part of the kernel driver starting from
-  OFED 5.5.
+  MLNX_OFED 5.5.
 
   To enable / disable the delay drop rearming, the private flag ``dropless_rq``
   can be set and queried via ethtool:
@@ -965,6 +999,10 @@ for an additional list of options shared with other mlx5 drivers.
   - 3, this engages tunnel offload mode. In E-Switch configuration, that
     mode implicitly activates ``dv_xmeta_en=1``.
 
+  - 4, this mode is only supported in HWS (``dv_flow_en=2``).
+    The Rx/Tx metadata with 32b width copy between FDB and NIC is supported.
+    The mark is only supported in NIC and there is no copy supported.
+
   +------+-----------+-----------+-------------+-------------+
   | Mode | ``MARK``  | ``META``  | ``META`` Tx | FDB/Through |
   +======+===========+===========+=============+=============+
@@ -1014,6 +1052,16 @@ for an additional list of options shared with other mlx5 drivers.
 
   Enabled by default if supported.
 
+- ``fdb_def_rule_en`` parameter [int]
+
+  A non-zero value enables to create a dedicated rule on E-Switch root table.
+  This dedicated rule forwards all incoming packets into table 1.
+  Other rules will be created in E-Switch table original table level plus one,
+  to improve the flow insertion rate due to skipping root table managed by firmware.
+  If set to 0, all rules will be created on the original E-Switch table level.
+
+  By default, the PMD will set this value to 1.
+
 - ``lacp_by_user`` parameter [int]
 
   A nonzero value enables the control of LACP traffic by the user application.
@@ -1043,6 +1091,17 @@ for an additional list of options shared with other mlx5 drivers.
   To probe VF port representors 0 through 2 on both PFs of bonding device::
 
     <Primary_PCI_BDF>,representor=pf[0,1]vf[0-2]
+
+- ``repr_matching_en`` parameter [int]
+
+  - 0. If representor matching is disabled, then there will be no implicit
+    item added. As a result, ingress flow rules will match traffic
+    coming to any port, not only the port on which flow rule is created.
+
+  - 1. If representor matching is enabled (default setting),
+    then each ingress pattern template has an implicit REPRESENTED_PORT
+    item added. Flow rules based on this pattern template will match
+    the vport associated with port on which rule is created.
 
 - ``max_dump_files_num`` parameter [int]
 
@@ -1273,6 +1332,14 @@ There are multiple Rx burst functions with different advantages and limitations.
 Supported hardware offloads
 ---------------------------
 
+Below tables show offload support depending on hardware, firmware,
+and Linux software support.
+
+The :ref:`Linux prerequisites <mlx5_linux_prerequisites>`
+are Linux kernel and rdma-core libraries.
+These dependencies are also packaged in MLNX_OFED or MLNX_EN,
+shortened below as "OFED".
+
 .. table:: Minimal SW/HW versions for queue offloads
 
    ============== ===== ===== ========= ===== ========== =============
@@ -1481,6 +1548,48 @@ All references to these flows held by the application should be discarded
 directly but neither destroyed nor flushed.
 
 The application should re-create the flows as required after the port restart.
+
+
+Notes for hairpin
+-----------------
+
+NVIDIA ConnectX and BlueField devices support
+specifying memory placement for hairpin Rx and Tx queues.
+This feature requires NVIDIA MLNX_OFED 5.8.
+
+By default, data buffers and packet descriptors for hairpin queues
+are placed in device memory
+which is shared with other resources (e.g. flow rules).
+
+Starting with DPDK 22.11 and NVIDIA MLNX_OFED 5.8,
+applications are allowed to:
+
+#. Place data buffers and Rx packet descriptors in dedicated device memory.
+   Application can request that configuration
+   through ``use_locked_device_memory`` configuration option.
+
+   Placing data buffers and Rx packet descriptors in dedicated device memory
+   can decrease latency on hairpinned traffic,
+   since traffic processing for the hairpin queue will not be memory starved.
+
+   However, reserving device memory for hairpin Rx queues
+   may decrease throughput under heavy load,
+   since less resources will be available on device.
+
+   This option is supported only for Rx hairpin queues.
+
+#. Place Tx packet descriptors in host memory.
+   Application can request that configuration
+   through ``use_rte_memory`` configuration option.
+
+   Placing Tx packet descritors in host memory can increase traffic throughput.
+   This results in more resources available on the device for other purposes,
+   which reduces memory contention on device.
+   Side effect of this option is visible increase in latency,
+   since each packet incurs additional PCI transactions.
+
+   This option is supported only for Tx hairpin queues.
+
 
 Notes for testpmd
 -----------------
@@ -1740,7 +1849,7 @@ Dependency on mstflint package
 
 In order to configure host shaper register,
 ``librte_net_mlx5`` depends on ``libmtcr_ul``
-which can be installed from OFED mstflint package.
+which can be installed from MLNX_OFED mstflint package.
 Meson detects ``libmtcr_ul`` existence at configure stage.
 If the library is detected, the application must link with ``-lmtcr_ul``,
 as done by the pkg-config file libdpdk.pc.
